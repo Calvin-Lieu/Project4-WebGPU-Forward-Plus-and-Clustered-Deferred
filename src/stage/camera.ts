@@ -3,19 +3,44 @@ import { toRadians } from "../math_util";
 import { device, canvas, fovYDegrees, aspectRatio } from "../renderer";
 
 class CameraUniforms {
-    readonly buffer = new ArrayBuffer(16 * 4);
+    readonly buffer = new ArrayBuffer(40 * 4);
+
     private readonly floatView = new Float32Array(this.buffer);
 
+    clusterParams: Float32Array = new Float32Array(8);
     set viewProjMat(mat: Float32Array) {
         // TODO-1.1: set the first 16 elements of `this.floatView` to the input `mat`
+        this.floatView.set(mat.subarray(0, 16), 0);
     }
 
     // TODO-2: add extra functions to set values needed for light clustering here
+    set viewMat(mat: Float32Array) {
+        this.floatView.set(mat.subarray(0, 16), 16);
+    }
+    setClusterParams(
+        width: number,
+        height: number,
+        near: number,
+        far: number,
+        xSlices: number,
+        ySlices: number,
+        zSlices: number
+    ) {
+        this.floatView[32] = width;
+        this.floatView[33] = height;
+        this.floatView[34] = near;
+        this.floatView[35] = far;
+        this.floatView[36] = xSlices;
+        this.floatView[37] = ySlices;
+        this.floatView[38] = zSlices;
+        this.floatView[39] = 0.0; // pad
+    }
 }
 
 export class Camera {
     uniforms: CameraUniforms = new CameraUniforms();
     uniformsBuffer: GPUBuffer;
+    clusterUniformBuffer?: GPUBuffer;
 
     projMat: Mat4 = mat4.create();
     cameraPos: Vec3 = vec3.create(-7, 2, 0);
@@ -32,7 +57,7 @@ export class Camera {
 
     keys: { [key: string]: boolean } = {};
 
-    constructor () {
+    constructor() {
         // TODO-1.1: set `this.uniformsBuffer` to a new buffer of size `this.uniforms.buffer.byteLength`
         // ensure the usage is set to `GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST` since we will be copying to this buffer
         // check `lights.ts` for examples of using `device.createBuffer()`
@@ -50,6 +75,12 @@ export class Camera {
         canvas.addEventListener('mousedown', () => canvas.requestPointerLock());
         canvas.addEventListener('mouseup', () => document.exitPointerLock());
         canvas.addEventListener('mousemove', (event) => this.onMouseMove(event));
+
+        this.uniformsBuffer = device.createBuffer({
+            label: "camera uniforms",
+            size: 40 * 4,
+            usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+        });
     }
 
     private onKeyEvent(event: KeyboardEvent, down: boolean) {
@@ -129,10 +160,23 @@ export class Camera {
         const viewMat = mat4.lookAt(this.cameraPos, lookPos, [0, 1, 0]);
         const viewProjMat = mat4.mul(this.projMat, viewMat);
         // TODO-1.1: set `this.uniforms.viewProjMat` to the newly calculated view proj mat
-
+        this.uniforms.viewProjMat = viewProjMat as unknown as Float32Array;
+        this.uniforms.viewMat = viewMat as unknown as Float32Array;
         // TODO-2: write to extra buffers needed for light clustering here
+        this.uniforms.setClusterParams(
+            canvas.width,
+            canvas.height,
+            Camera.nearPlane,
+            Camera.farPlane,
+            16,
+            9,
+            24
+        );
 
-        // TODO-1.1: upload `this.uniforms.buffer` (host side) to `this.uniformsBuffer` (device side)
-        // check `lights.ts` for examples of using `device.queue.writeBuffer()`
+        device.queue.writeBuffer(this.uniformsBuffer, 0, this.uniforms.buffer);
+    }
+
+    getUniformsBuffer(): GPUBuffer {
+        return this.uniformsBuffer;
     }
 }

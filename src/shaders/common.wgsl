@@ -1,9 +1,9 @@
 // CHECKITOUT: code that you add here will be prepended to all shaders
 
 struct Light {
-    pos: vec3f,
-    color: vec3f
-}
+    pos   : vec3f,
+    color : vec3f,
+};
 
 struct LightSet {
     numLights: u32,
@@ -13,8 +13,16 @@ struct LightSet {
 // TODO-2: you may want to create a ClusterSet struct similar to LightSet
 
 struct CameraUniforms {
-    // TODO-1.3: add an entry for the view proj mat (of type mat4x4f)
-}
+    viewProjMat       : mat4x4f,
+    viewMat           : mat4x4f,
+    screenDimensions  : vec2f,  // width, height of the canvas
+    nearPlane         : f32,
+    farPlane          : f32,
+    xSlices          : f32,     
+    ySlices          : f32,    
+    zSlices          : f32,      
+    _pad0            : f32,    
+};
 
 // CHECKITOUT: this special attenuation function ensures lights don't affect geometry outside the maximum light radius
 fn rangeAttenuation(distance: f32) -> f32 {
