@@ -1,46 +1,41 @@
 import { Mat4, mat4, Vec3, vec3 } from "wgpu-matrix";
 import { toRadians } from "../math_util";
 import { device, canvas, fovYDegrees, aspectRatio } from "../renderer";
+import { constants } from "../shaders/shaders";
 
 class CameraUniforms {
     readonly buffer = new ArrayBuffer(40 * 4);
-
     private readonly floatView = new Float32Array(this.buffer);
 
-    clusterParams: Float32Array = new Float32Array(8);
     set viewProjMat(mat: Float32Array) {
-        // TODO-1.1: set the first 16 elements of `this.floatView` to the input `mat`
-        this.floatView.set(mat.subarray(0, 16), 0);
+        this.floatView.set(mat, 0);
     }
 
-    // TODO-2: add extra functions to set values needed for light clustering here
     set viewMat(mat: Float32Array) {
-        this.floatView.set(mat.subarray(0, 16), 16);
+        this.floatView.set(mat, 16);
     }
-    setClusterParams(
-        width: number,
-        height: number,
-        near: number,
-        far: number,
-        xSlices: number,
-        ySlices: number,
-        zSlices: number
-    ) {
+
+    setScreenDimensions(width: number, height: number) {
         this.floatView[32] = width;
         this.floatView[33] = height;
+    }
+
+    setDepthPlanes(near: number, far: number) {
         this.floatView[34] = near;
         this.floatView[35] = far;
-        this.floatView[36] = xSlices;
-        this.floatView[37] = ySlices;
-        this.floatView[38] = zSlices;
-        this.floatView[39] = 0.0; // pad
+    }
+
+    setTileDimensions(tilesX: number, tilesY: number, tilesZ: number) {
+        this.floatView[36] = tilesX;
+        this.floatView[37] = tilesY;
+        this.floatView[38] = tilesZ;
+        this.floatView[39] = 0.0; // padding
     }
 }
 
 export class Camera {
     uniforms: CameraUniforms = new CameraUniforms();
     uniformsBuffer: GPUBuffer;
-    clusterUniformBuffer?: GPUBuffer;
 
     projMat: Mat4 = mat4.create();
     cameraPos: Vec3 = vec3.create(-7, 2, 0);
@@ -58,34 +53,28 @@ export class Camera {
     keys: { [key: string]: boolean } = {};
 
     constructor() {
-        // TODO-1.1: set `this.uniformsBuffer` to a new buffer of size `this.uniforms.buffer.byteLength`
-        // ensure the usage is set to `GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST` since we will be copying to this buffer
-        // check `lights.ts` for examples of using `device.createBuffer()`
-        //
-        // note that you can add more variables (e.g. inverse proj matrix) to this buffer in later parts of the assignment
+        this.uniformsBuffer = device.createBuffer({
+            label: "camera uniforms",
+            size: this.uniforms.buffer.byteLength,
+            usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+        });
 
         this.projMat = mat4.perspective(toRadians(fovYDegrees), aspectRatio, Camera.nearPlane, Camera.farPlane);
 
-        this.rotateCamera(0, 0); // set initial camera vectors
+        this.rotateCamera(0, 0);
 
         window.addEventListener('keydown', (event) => this.onKeyEvent(event, true));
         window.addEventListener('keyup', (event) => this.onKeyEvent(event, false));
-        window.onblur = () => this.keys = {}; // reset keys on page exit so they don't get stuck (e.g. on alt + tab)
+        window.onblur = () => this.keys = {};
 
         canvas.addEventListener('mousedown', () => canvas.requestPointerLock());
         canvas.addEventListener('mouseup', () => document.exitPointerLock());
         canvas.addEventListener('mousemove', (event) => this.onMouseMove(event));
-
-        this.uniformsBuffer = device.createBuffer({
-            label: "camera uniforms",
-            size: 40 * 4,
-            usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-        });
     }
 
     private onKeyEvent(event: KeyboardEvent, down: boolean) {
         this.keys[event.key.toLowerCase()] = down;
-        if (this.keys['alt']) { // prevent issues from alt shortcuts
+        if (this.keys['alt']) {
             event.preventDefault();
         }
     }
@@ -159,18 +148,15 @@ export class Camera {
         const lookPos = vec3.add(this.cameraPos, vec3.scale(this.cameraFront, 1));
         const viewMat = mat4.lookAt(this.cameraPos, lookPos, [0, 1, 0]);
         const viewProjMat = mat4.mul(this.projMat, viewMat);
-        // TODO-1.1: set `this.uniforms.viewProjMat` to the newly calculated view proj mat
-        this.uniforms.viewProjMat = viewProjMat as unknown as Float32Array;
-        this.uniforms.viewMat = viewMat as unknown as Float32Array;
-        // TODO-2: write to extra buffers needed for light clustering here
-        this.uniforms.setClusterParams(
-            canvas.width,
-            canvas.height,
-            Camera.nearPlane,
-            Camera.farPlane,
-            16,
-            9,
-            24
+
+        this.uniforms.viewProjMat = viewProjMat;
+        this.uniforms.viewMat = viewMat;
+        this.uniforms.setScreenDimensions(canvas.width, canvas.height);
+        this.uniforms.setDepthPlanes(Camera.nearPlane, Camera.farPlane);
+        this.uniforms.setTileDimensions(
+            constants.tilesX,
+            constants.tilesY,
+            constants.tilesZ
         );
 
         device.queue.writeBuffer(this.uniformsBuffer, 0, this.uniforms.buffer);

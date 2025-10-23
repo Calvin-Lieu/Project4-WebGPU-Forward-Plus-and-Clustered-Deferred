@@ -1,72 +1,112 @@
-const X_SLICES : u32 = ${X_SLICES}u;
-const Y_SLICES : u32 = ${Y_SLICES}u;
-const Z_SLICES : u32 = ${Z_SLICES}u;
-const MAX_LIGHTS_PER_CLUSTER : u32 = ${MAX_LIGHTS_PER_CLUSTER}u;
+@group(${bindGroup_scene}) @binding(0) var<uniform> cameraUniforms: CameraUniforms;
+@group(${bindGroup_scene}) @binding(1) var<storage, read> lightSet: LightSet;
+@group(${bindGroup_scene}) @binding(2) var<storage, read> tileSet: TileSet;
+@group(${bindGroup_scene}) @binding(3) var<storage, read> tileLightIndices: TileLightIndices;
 
-struct Cluster {
-    count   : u32,
-    _pad1   : u32,
-    _pad2   : u32,
-    _pad3   : u32,
-    indices : array<u32, MAX_LIGHTS_PER_CLUSTER>,
-};
+@group(${bindGroup_material}) @binding(0) var diffuseTex: texture_2d<f32>;
+@group(${bindGroup_material}) @binding(1) var diffuseTexSampler: sampler;
 
-@group(0) @binding(0) var<uniform> camera : CameraUniforms;
-@group(0) @binding(1) var<storage, read> lightSet : LightSet;
-@group(0) @binding(2) var<storage, read> clusters : array<Cluster>;
+struct FragmentInput {
+    @location(0) pos: vec3f,
+    @location(1) nor: vec3f,
+    @location(2) uv: vec2f
+}
 
-@group(${bindGroup_material}) @binding(0) var baseColorTex : texture_2d<f32>;
-@group(${bindGroup_material}) @binding(1) var baseColorSampler : sampler;
+struct ScreenSpaceInfo {
+    normalizedCoords: vec2f,
+    viewSpaceDepth: f32
+}
 
-fn getClusterIndex(fragCoord : vec4f, worldPos : vec3f) -> u32 {
-    // Screen space calculation
-    let screenX = fragCoord.x / camera.screenDimensions.x;
-    let screenY = fragCoord.y / camera.screenDimensions.y;
+struct SpatialIndex {
+    tileCoords: vec3u,
+    flatIndex: u32
+}
 
-    let xSlice = clamp(u32(screenX * f32(X_SLICES)), 0u, X_SLICES - 1u);
-    let ySlice = clamp(u32(screenY * f32(Y_SLICES)), 0u, Y_SLICES - 1u);
-
-    // Transform world position to view space for depth
-    let viewPos = (camera.viewMat * vec4f(worldPos, 1.0)).xyz;
-    let depth = -viewPos.z;  // View space depth (positive)
+fn extractScreenSpaceInfo(fragmentPos: vec4f, worldPos: vec3f) -> ScreenSpaceInfo {
+    let screenCoords = vec2f(
+        fragmentPos.x / cameraUniforms.screenWidth,
+        fragmentPos.y / cameraUniforms.screenHeight
+    );
     
-    // Use logarithmic depth slicing (same as compute shader)
-    let near = camera.nearPlane;
-    let far = camera.farPlane;
-    let depthSliceScale = log(far / near) / f32(Z_SLICES);
+    let viewSpacePos = (cameraUniforms.viewMat * vec4f(worldPos, 1.0)).xyz;
+    let depth = -viewSpacePos.z;
     
-    // Find which logarithmic slice this depth falls into
-    let normalizedLogDepth = log(depth / near) / log(far / near);
-    let zSlice = clamp(u32(normalizedLogDepth * f32(Z_SLICES)), 0u, Z_SLICES - 1u);
+    return ScreenSpaceInfo(screenCoords, depth);
+}
 
-    return xSlice + ySlice * X_SLICES + zSlice * (X_SLICES * Y_SLICES);
+fn mapToSpatialGrid(screenInfo: ScreenSpaceInfo) -> vec3u {
+    let gridX = u32(clamp(screenInfo.normalizedCoords.x * cameraUniforms.tilesX, 0.0, cameraUniforms.tilesX - 1.0));
+    let gridY = u32(clamp(screenInfo.normalizedCoords.y * cameraUniforms.tilesY, 0.0, cameraUniforms.tilesY - 1.0));
+    
+    let depthRange = clamp(screenInfo.viewSpaceDepth, cameraUniforms.nearPlane, cameraUniforms.farPlane);
+    let logNormalizedDepth = log(depthRange / cameraUniforms.nearPlane) / log(cameraUniforms.farPlane / cameraUniforms.nearPlane);
+    let gridZ = u32(clamp(logNormalizedDepth * cameraUniforms.tilesZ, 0.0, cameraUniforms.tilesZ - 1.0));
+    
+    return vec3u(gridX, gridY, gridZ);
+}
+
+fn calculateSpatialIndex(gridCoords: vec3u) -> u32 {
+    return gridCoords.z * u32(cameraUniforms.tilesX) * u32(cameraUniforms.tilesY) + 
+           gridCoords.y * u32(cameraUniforms.tilesX) + gridCoords.x;
+}
+
+fn resolveSpatialIndex(screenInfo: ScreenSpaceInfo) -> SpatialIndex {
+    let gridCoords = mapToSpatialGrid(screenInfo);
+    let flatIndex = calculateSpatialIndex(gridCoords);
+    return SpatialIndex(gridCoords, flatIndex);
+}
+
+fn calculateLightingContribution(worldPos: vec3f, normal: vec3f, spatialIndex: SpatialIndex) -> vec3f {
+    let maxTiles = arrayLength(&tileSet.tileLightData);
+    if (spatialIndex.flatIndex >= maxTiles) {
+        return vec3f(0.1, 0.1, 0.1); // Return ambient only if tile index is invalid
+    }
+    
+    let lightData = tileSet.tileLightData[spatialIndex.flatIndex];
+    var accumulatedLighting = vec3f(0.1, 0.1, 0.1); // Ambient contribution
+    
+    let lightStartIndex = lightData.lightStartOffset;
+    let lightCount = min(lightData.lightCount, ${maxLightsPerTile}); // Cap to prevent overflow
+    let maxLightIndices = arrayLength(&tileLightIndices.lightIndices);
+    let maxLights = arrayLength(&lightSet.lights);
+    
+    for (var lightIdx = 0u; lightIdx < lightCount; lightIdx++) {
+        let globalIndexLocation = lightStartIndex + lightIdx;
+        
+        if (globalIndexLocation >= maxLightIndices) {
+            break; // Stop processing if we're beyond the array bounds
+        }
+        
+        let globalLightIndex = tileLightIndices.lightIndices[globalIndexLocation];
+        
+        if (globalLightIndex >= maxLights) {
+            continue; // Skip invalid light indices
+        }
+        
+        let currentLight = lightSet.lights[globalLightIndex];
+        let lightContribution = calculateLightContrib(currentLight, worldPos, normal);
+        accumulatedLighting += lightContribution;
+    }
+    
+    return accumulatedLighting;
+}
+
+fn combineColorAndLighting(baseColor: vec4f, lightingResult: vec3f) -> vec4f {
+    let finalColor = baseColor.rgb * lightingResult;
+    return vec4(finalColor, 1.0);
 }
 
 @fragment
-fn main(
-    @location(0) inWorldPos : vec3f,
-    @location(1) inNormal   : vec3f,
-    @location(2) inUV       : vec2f,
-    @builtin(position) fragCoord : vec4f
-) -> @location(0) vec4f {
-    let baseColor = textureSample(baseColorTex, baseColorSampler, inUV);
-    if (baseColor.a < 0.5f) {
+fn main(in: FragmentInput, @builtin(position) fragCoord: vec4f) -> @location(0) vec4f {
+    let materialColor = textureSample(diffuseTex, diffuseTexSampler, in.uv);
+    
+    if (materialColor.a < 0.5f) {
         discard;
     }
     
-    let clusterIndex = getClusterIndex(fragCoord, inWorldPos);
-    let cluster = clusters[clusterIndex];
-
-    var totalLight = vec3f(0.1, 0.1, 0.1);
+    let screenInfo = extractScreenSpaceInfo(fragCoord, in.pos);
+    let spatialIndex = resolveSpatialIndex(screenInfo);
+    let lightingResult = calculateLightingContribution(in.pos, normalize(in.nor), spatialIndex);
     
-    let lightCount = cluster.count;
-    for (var i : u32 = 0u; i < lightCount; i = i + 1u) {
-        let lightIndex = cluster.indices[i];
-        let light = lightSet.lights[lightIndex];
-
-        totalLight += calculateLightContrib(light, inWorldPos, normalize(inNormal));
-    }
-
-    let finalColor = baseColor.rgb * totalLight;
-    return vec4(finalColor, 1);
+    return combineColorAndLighting(materialColor, lightingResult);
 }

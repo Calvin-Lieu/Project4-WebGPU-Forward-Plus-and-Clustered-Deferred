@@ -29,13 +29,14 @@ export const constants = {
     bindGroup_material: 2,
 
     moveLightsWorkgroupSize: 128,
+    tileWorkgroupSize: 64,
 
     lightRadius: 2,
 
-    X_SLICES: 32,
-    Y_SLICES: 18,
-    Z_SLICES: 48,
-    MAX_LIGHTS_PER_CLUSTER: 250,
+    tilesX: 16,
+    tilesY: 9,
+    tilesZ: 24,
+    maxLightsPerTile: 300,
 };
 
 // =================================
