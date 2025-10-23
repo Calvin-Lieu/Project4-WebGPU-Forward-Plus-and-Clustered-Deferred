@@ -1,112 +1,137 @@
-const X_SLICES : u32 = ${X_SLICES}u;
-const Y_SLICES : u32 = ${Y_SLICES}u;
-const Z_SLICES : u32 = ${Z_SLICES}u;
-const MAX_LIGHTS_PER_CLUSTER : u32 = ${MAX_LIGHTS_PER_CLUSTER}u;
+@group(0) @binding(0) var<uniform> cameraUniforms: CameraUniforms;
+@group(0) @binding(1) var<storage, read> lightSet: LightSet;
+@group(0) @binding(2) var<storage, read_write> tileSet: TileSet;
+@group(0) @binding(3) var<storage, read_write> tileLightIndices: TileLightIndices;
 
-struct Cluster {
-    count   : u32,
-    _pad1   : u32,
-    _pad2   : u32,
-    _pad3   : u32,
-    indices : array<u32, MAX_LIGHTS_PER_CLUSTER>,
-};
-
-@group(0) @binding(0) var<uniform> camera : CameraUniforms;
-@group(0) @binding(1) var<storage, read> lightSet : LightSet;
-@group(0) @binding(2) var<storage, read_write> clusters : array<Cluster>;
-// @group(0) @binding(3) var<storage, read_write> debugCounts : array<u32>;
-
-fn flatten_index(x: u32, y: u32, z: u32) -> u32 {
-    return x + y * X_SLICES + z * (X_SLICES * Y_SLICES);
+struct SpatialBounds {
+    minCorner: vec3f,
+    maxCorner: vec3f
 }
 
-// Convert screen coordinates to view space 
-fn screenToViewSpace(screenCoord: vec2f, depth: f32) -> vec3f {
-    // Convert screen [0,1] to NDC [-1,1]
-    let ndc = vec2f(
+struct TileCoordinates {
+    x: u32,
+    y: u32, 
+    z: u32
+}
+
+fn calculateTileCoordinates(globalIndex: u32) -> TileCoordinates {
+    let tilesPerLayer = u32(cameraUniforms.tilesX) * u32(cameraUniforms.tilesY);
+    let z = globalIndex / tilesPerLayer;
+    let xyIndex = globalIndex % tilesPerLayer;
+    let y = xyIndex / u32(cameraUniforms.tilesX);
+    let x = xyIndex % u32(cameraUniforms.tilesX);
+    
+    return TileCoordinates(x, y, z);
+}
+
+fn computeFlatIndex(coords: TileCoordinates) -> u32 {
+    return coords.z * u32(cameraUniforms.tilesX) * u32(cameraUniforms.tilesY) + 
+           coords.y * u32(cameraUniforms.tilesX) + coords.x;
+}
+
+fn transformScreenToViewSpace(screenCoord: vec2f, depth: f32) -> vec3f {
+    let ndcCoord = vec2f(
         screenCoord.x * 2.0 - 1.0,
-        (1.0 - screenCoord.y) * 2.0 - 1.0  // Flip Y for correct orientation
+        (1.0 - screenCoord.y) * 2.0 - 1.0  
     );
     
-    // Calculate FOV parameters 
-    let aspectRatio = camera.screenDimensions.x / camera.screenDimensions.y;
-    let tanHalfFovY = 0.4142135623730951; // tan(22.5 degrees) for 45-degree FOV
-    let tanHalfFovX = tanHalfFovY * aspectRatio;
+    let aspectRatio = cameraUniforms.screenWidth / cameraUniforms.screenHeight;
+    let fovTangent = 0.4142135623730951; 
+    let horizontalTangent = fovTangent * aspectRatio;
     
-    // Convert NDC to view space
     return vec3f(
-        ndc.x * tanHalfFovX * depth,
-        ndc.y * tanHalfFovY * depth,
-        -depth  // Negative Z in view space
+        ndcCoord.x * horizontalTangent * depth,
+        ndcCoord.y * fovTangent * depth,
+        -depth
     );
 }
 
-fn sphere_intersects_aabb(center: vec3f, radius: f32, min: vec3f, max: vec3f) -> bool {
-    var d: f32 = 0.0;
-    for (var i: u32 = 0u; i < 3u; i = i + 1u) {
-        let p = select(center[i] - max[i], select(0.0, min[i] - center[i], center[i] < min[i]), center[i] > max[i]);
-        d += p * p;
+fn calculateDepthRange(zTile: u32) -> vec2f {
+    let depthScale = log(cameraUniforms.farPlane / cameraUniforms.nearPlane) / cameraUniforms.tilesZ;
+    let nearDepth = cameraUniforms.nearPlane * exp(f32(zTile) * depthScale);
+    let farDepth = cameraUniforms.nearPlane * exp(f32(zTile + 1) * depthScale);
+    
+    return vec2f(nearDepth, farDepth);
+}
+
+fn buildTileBounds(coords: TileCoordinates) -> SpatialBounds {
+    let screenExtents = vec4f(
+        f32(coords.x) / cameraUniforms.tilesX,
+        f32(coords.y) / cameraUniforms.tilesY,
+        f32(coords.x + 1) / cameraUniforms.tilesX,
+        f32(coords.y + 1) / cameraUniforms.tilesY
+    );
+    
+    let depthRange = calculateDepthRange(coords.z);
+    
+    // Calculate all frustum corners in view space
+    let nearCorners = array<vec3f, 4>(
+        transformScreenToViewSpace(screenExtents.xy, depthRange.x),
+        transformScreenToViewSpace(vec2f(screenExtents.z, screenExtents.y), depthRange.x),
+        transformScreenToViewSpace(vec2f(screenExtents.x, screenExtents.w), depthRange.x),
+        transformScreenToViewSpace(screenExtents.zw, depthRange.x)
+    );
+    
+    let farCorners = array<vec3f, 4>(
+        transformScreenToViewSpace(screenExtents.xy, depthRange.y),
+        transformScreenToViewSpace(vec2f(screenExtents.z, screenExtents.y), depthRange.y),
+        transformScreenToViewSpace(vec2f(screenExtents.x, screenExtents.w), depthRange.y),
+        transformScreenToViewSpace(screenExtents.zw, depthRange.y)
+    );
+    
+    var bounds = SpatialBounds(nearCorners[0], nearCorners[0]);
+    
+    // Find AABB that encompasses all corners
+    for (var i: u32 = 0; i < 4; i++) {
+        bounds.minCorner = min(bounds.minCorner, nearCorners[i]);
+        bounds.maxCorner = max(bounds.maxCorner, nearCorners[i]);
+        bounds.minCorner = min(bounds.minCorner, farCorners[i]);
+        bounds.maxCorner = max(bounds.maxCorner, farCorners[i]);
     }
-    return d <= radius * radius;
+    
+    return bounds;
 }
 
-@compute @workgroup_size(1, 1, 1)
-fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
-    if (gid.x >= X_SLICES || gid.y >= Y_SLICES || gid.z >= Z_SLICES) { return; }
-
-    let clusterIndex = flatten_index(gid.x, gid.y, gid.z);
-    clusters[clusterIndex].count = 0u;
-
-    let near = camera.nearPlane;
-    let far = camera.farPlane;
+fn testSphereAABBIntersection(sphereCenter: vec3f, sphereRadius: f32, bounds: SpatialBounds) -> bool {
+    let closestPoint = clamp(sphereCenter, bounds.minCorner, bounds.maxCorner);
+    let distanceVector = sphereCenter - closestPoint;
+    let distanceSquared = dot(distanceVector, distanceVector);
     
-    // Logarithmic depth slicing
-    let depthSliceScale = log(far / near) / f32(Z_SLICES);
-    let clusterDepthNear = near * exp(f32(gid.z) * depthSliceScale);
-    let clusterDepthFar = near * exp(f32(gid.z + 1) * depthSliceScale);
+    return distanceSquared <= (sphereRadius * sphereRadius);
+}
 
-    // Screen space bounds for this cluster
-    let clusterMinScreen = vec2f(
-        f32(gid.x) / f32(X_SLICES), 
-        f32(gid.y) / f32(Y_SLICES)
-    );
-    let clusterMaxScreen = vec2f(
-        f32(gid.x + 1) / f32(X_SLICES), 
-        f32(gid.y + 1) / f32(Y_SLICES)
-    );
-    
-    // Calculate all 8 corners of the cluster frustum
-    let corner1 = screenToViewSpace(clusterMinScreen, clusterDepthNear);
-    let corner2 = screenToViewSpace(vec2f(clusterMaxScreen.x, clusterMinScreen.y), clusterDepthNear);
-    let corner3 = screenToViewSpace(vec2f(clusterMinScreen.x, clusterMaxScreen.y), clusterDepthNear);
-    let corner4 = screenToViewSpace(clusterMaxScreen, clusterDepthNear);
-    let corner5 = screenToViewSpace(clusterMinScreen, clusterDepthFar);
-    let corner6 = screenToViewSpace(vec2f(clusterMaxScreen.x, clusterMinScreen.y), clusterDepthFar);
-    let corner7 = screenToViewSpace(vec2f(clusterMinScreen.x, clusterMaxScreen.y), clusterDepthFar);
-    let corner8 = screenToViewSpace(clusterMaxScreen, clusterDepthFar);
-    
-    // Find bounding box that encompasses all corners
-    var clusterMin = min(min(min(corner1, corner2), min(corner3, corner4)), 
-                         min(min(corner5, corner6), min(corner7, corner8)));
-    var clusterMax = max(max(max(corner1, corner2), max(corner3, corner4)), 
-                         max(max(corner5, corner6), max(corner7, corner8)));
-
-    // Transform lights to view space
+fn processLightAssignment(coords: TileCoordinates, bounds: SpatialBounds) -> u32 {
+    let tileIndex = computeFlatIndex(coords);
     let lightRadius = f32(${lightRadius});
-
-    for (var i: u32 = 0u; i < lightSet.numLights; i = i + 1u) {
-        if (clusters[clusterIndex].count >= MAX_LIGHTS_PER_CLUSTER) { break; }
-
-        let lightWorldPos = lightSet.lights[i].pos;
-        // Transform light position to view space using view matrix
-        let lightViewPos = (camera.viewMat * vec4f(lightWorldPos, 1.0)).xyz;
+    var lightCount: u32 = 0;
+    let baseOffset = tileIndex * ${maxLightsPerTile};
+    
+    for (var lightIdx: u32 = 0; lightIdx < lightSet.numLights && lightCount < ${maxLightsPerTile}; lightIdx++) {
+        let worldLightPos = lightSet.lights[lightIdx].pos;
+        let viewLightPos = (cameraUniforms.viewMat * vec4f(worldLightPos, 1.0)).xyz;
         
-        if (sphere_intersects_aabb(lightViewPos, lightRadius, clusterMin, clusterMax)) {
-            let idx = clusters[clusterIndex].count;
-            clusters[clusterIndex].indices[idx] = i;
-            clusters[clusterIndex].count = idx + 1u;
+        if (testSphereAABBIntersection(viewLightPos, lightRadius, bounds)) {
+            tileLightIndices.lightIndices[baseOffset + lightCount] = lightIdx;
+            lightCount++;
         }
     }
     
-    // debugCounts[clusterIndex] = clusters[clusterIndex].count;
+    return lightCount;
+}
+
+@compute @workgroup_size(${tileWorkgroupSize})
+fn main(@builtin(global_invocation_id) globalId: vec3u) {
+    let tileIndex = globalId.x;
+    let maxTiles = u32(cameraUniforms.tilesX) * u32(cameraUniforms.tilesY) * u32(cameraUniforms.tilesZ);
+    
+    if (tileIndex >= maxTiles) {
+        return;
+    }
+    
+    let tileCoords = calculateTileCoordinates(tileIndex);
+    let tileBounds = buildTileBounds(tileCoords);
+    let assignedLights = processLightAssignment(tileCoords, tileBounds);
+    
+    let lightOffset = tileIndex * ${maxLightsPerTile};
+    tileSet.tileLightData[tileIndex] = TileLightData(assignedLights, lightOffset, 0, 0);
 }
