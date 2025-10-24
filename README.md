@@ -8,9 +8,9 @@
 
 ## Live Demo
 
-[Link](YOUR_GITHUB_PAGES_LINK)
+[Link](https://calvin-lieu.github.io/Project4-WebGPU-Forward-Plus-and-Clustered-Deferred/)
 
-[![live demo](img/demo.gif)](YOUR_GITHUB_PAGES_LINK)
+[![live demo](img/project4_final.mp4)]
 
 ## Summary
 
