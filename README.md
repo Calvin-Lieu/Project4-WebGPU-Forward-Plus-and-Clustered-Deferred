@@ -6,7 +6,7 @@
 
 * Calvin Lieu
   * [LinkedIn](www.linkedin.com/in/calvin-lieu-91912927b)
-* Tested on: Version 141.0.7390.55 (Official Build) (arm64), NVIDIA GeForce RTX 5050 Laptop GPU 8GB (Personal)
+* Tested on: Google Chrome Version 141.0.7390.55 (Official Build) (arm64), NVIDIA GeForce RTX 5050 Laptop GPU 8GB (Personal)
 
 ## Live Demo
 
