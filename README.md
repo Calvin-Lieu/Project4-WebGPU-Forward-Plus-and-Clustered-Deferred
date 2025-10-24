@@ -6,7 +6,7 @@
 
 * Calvin Lieu
   * [LinkedIn](www.linkedin.com/in/calvin-lieu-91912927b)
-* Tested on: Windows 11, i5-13450HX @ 2.40GHz 16GB, NVIDIA GeForce RTX 5050 Laptop GPU 8GB (Personal)
+* Tested on: Version 141.0.7390.55 (Official Build) (arm64), NVIDIA GeForce RTX 5050 Laptop GPU 8GB (Personal)
 
 ## Live Demo
 
