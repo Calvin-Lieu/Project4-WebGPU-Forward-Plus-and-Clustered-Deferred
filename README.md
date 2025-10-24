@@ -16,7 +16,7 @@
 
 ## Summary
 
-A WebGPU implementation of the Forward+ Clustered and Clustered Deferred shading algorithms. These algorithms allow for the shading of scenes with a large number of dynamic lights by culling the lights needed to shade a given pixel by bucketing the lights into 3D "clusters" that make up the view frustum.
+A WebGPU implementation of the Forward+ Clustered and Clustered Deferred shading algorithms. These algorithms allow for the shading of scenes with a large number of dynamic lights by culling the lights needed to shade a given pixel by bucketing the lights into 3D "clusters" that make up the view frustum. A naive implementation is also included.
 
 ## Build Instructions
 ```bash
