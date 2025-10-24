@@ -10,7 +10,7 @@
 
 [Link](https://calvin-lieu.github.io/Project4-WebGPU-Forward-Plus-and-Clustered-Deferred/)
 
-[![live demo](img/project4_final.mp4)]
+[![demo](img/project4_final.gif)](https://calvin-lieu.github.io/Project4-WebGPU-Forward-Plus-and-Clustered-Deferred/)
 
 ## Summary
 
