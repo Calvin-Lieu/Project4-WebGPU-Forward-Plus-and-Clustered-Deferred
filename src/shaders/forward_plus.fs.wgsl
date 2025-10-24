@@ -66,7 +66,10 @@ fn calculateLightingContribution(worldPos: vec3f, normal: vec3f, spatialIndex: S
     var accumulatedLighting = vec3f(0.1, 0.1, 0.1); // Ambient contribution
     
     let lightStartIndex = lightData.lightStartOffset;
-    let lightCount = min(lightData.lightCount, ${maxLightsPerTile}); // Cap to prevent overflow
+    let lightCount = min(lightData.lightCount, ${maxLightsPerTile});
+    if (lightCount == 0u) {
+        return accumulatedLighting;
+    }
     let maxLightIndices = arrayLength(&tileLightIndices.lightIndices);
     let maxLights = arrayLength(&lightSet.lights);
     

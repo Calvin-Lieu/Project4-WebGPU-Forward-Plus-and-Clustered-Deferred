@@ -1,5 +1,3 @@
-// CHECKITOUT: this file loads all the shaders and preprocesses them with some common code
-
 import { Camera } from '../stage/camera';
 
 import commonRaw from './common.wgsl?raw';
@@ -36,7 +34,7 @@ export const constants = {
     tilesX: 16,
     tilesY: 9,
     tilesZ: 24,
-    maxLightsPerTile: 1024,
+    maxLightsPerTile: 512,
 };
 
 // =================================

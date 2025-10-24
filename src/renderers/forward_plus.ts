@@ -189,19 +189,6 @@ export class ForwardPlusRenderer extends renderer.Renderer {
         return { ...computeResources, ...renderResources };
     }
 
-    private executeLightMovementPhase(encoder: GPUCommandEncoder, time: number) {
-        // Write time uniform
-        renderer.device.queue.writeBuffer(this.lights.timeUniformBuffer, 0, new Float32Array([time]));
-
-        const pass = encoder.beginComputePass({ label: "light movement phase" });
-        pass.setPipeline(this.lights.moveLightsComputePipeline);
-        pass.setBindGroup(0, this.lights.moveLightsComputeBindGroup);
-
-        const workgroupCount = Math.ceil(this.lights.numLights / shaders.constants.moveLightsWorkgroupSize);
-        pass.dispatchWorkgroups(workgroupCount);
-        pass.end();
-    }
-
     private executeComputePhase(encoder: GPUCommandEncoder) {
         const pass = encoder.beginComputePass({ label: "spatial organization phase" });
         pass.setPipeline(this.pipelineResources.computePipeline);
@@ -256,13 +243,10 @@ export class ForwardPlusRenderer extends renderer.Renderer {
     override draw() {
         const encoder = renderer.device.createCommandEncoder();
 
-        // 1. Move lights first
-        this.executeLightMovementPhase(encoder, performance.now());
-
-        // 2. Then cluster with updated positions
+        // 1. Cluster with updated positions
         this.executeComputePhase(encoder);
 
-        // 3. Then render with correct clustering
+        // 2. Then render with correct clustering
         this.executeRenderPhase(encoder);
 
         // Submit everything together
