@@ -1,5 +1,7 @@
 # WebGPU Forward+ and Clustered Deferred Shading
 
+![screenshot](img/screenshot.png)
+
 **University of Pennsylvania, CIS 565: GPU Programming and Architecture, Project 4**
 
 * Calvin Lieu
