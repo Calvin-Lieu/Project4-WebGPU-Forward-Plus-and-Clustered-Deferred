@@ -39,14 +39,17 @@ export const constants = {
 
 // =================================
 
-function evalShaderRaw(raw: string) {
-    return eval('`' + raw.replaceAll('${', '${constants.') + '`');
+function replaceConstants(raw: string): string {
+    let code = raw;
+    for (const [key, value] of Object.entries(constants)) {
+        code = code.replaceAll(`\${${key}}`, value.toString());
+    }
+    return code;
 }
 
-const commonSrc: string = evalShaderRaw(commonRaw);
-
-function processShaderRaw(raw: string) {
-    return commonSrc + evalShaderRaw(raw);
+function processShaderRaw(raw: string): string {
+    const commonSrc = replaceConstants(commonRaw);
+    return commonSrc + replaceConstants(raw);
 }
 
 export const naiveVertSrc: string = processShaderRaw(naiveVertRaw);
